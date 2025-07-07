@@ -185,6 +185,106 @@ void SignalExit(int signo, siginfo_t* info, void* ucontext) {
   ResetStdio();
   raise(signo);
 }
+// Runs on the main thread, inside the isolate, at the next V8 safe point after
+// RequestInterrupt() is called. This is where it is safe to touch JS state.
+//
+// Demo behavior: reach into the running program's globals and mutate them to
+// show that native code can change what the JS code observes mid-execution:
+//   - increment `global.counter` (lets cocoon/state.js escape its spin loop)
+//   - force `global.settings.debugMode = true`
+void InterruptHandler(v8::Isolate* isolate, void* data) {
+  // The action is selected by the COCOON_INTERRUPT env var:
+  //   "throw"     - schedule a JS exception, aborting the current call. If that
+  //                 call is inside a try/catch (as redos.js's handler is), only
+  //                 that request unwinds and the service keeps running. This is
+  //                 what actually recovers a loop blocked by a runaway regex.
+  //   "terminate" - isolate->TerminateExecution(): uncatchable hard-abort of the
+  //                 current JS stack; unwinds past try/catch and stops the
+  //                 embedder, i.e. ends the process. NOT graceful recovery.
+  //   anything else / unset ("mutate", the default) - the state-write demo used
+  //                 by cocoon/state.js.
+  const char* env_action = std::getenv("COCOON_INTERRUPT");
+  const std::string mode = env_action ? env_action : "mutate";
+  fprintf(stderr,
+          "[cocoon] InterruptHandler: running inside isolate "
+          "(InContext=%s, mode=%s)\n",
+          isolate->InContext() ? "true" : "false",
+          mode.c_str());
+
+  v8::HandleScope handle_scope(isolate);
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Context::Scope context_scope(context);
+  v8::Local<v8::Object> global = context->Global();
+
+  if (mode == "throw") {
+    isolate->ThrowError(
+        v8::String::NewFromUtf8(isolate,
+                                "[cocoon] execution interrupted by SIGUSR2")
+            .ToLocalChecked());
+    fprintf(stderr, "[cocoon] InterruptHandler: threw interrupt exception\n");
+    return;
+  }
+
+  if (mode == "terminate") {
+    isolate->TerminateExecution();
+    fprintf(stderr,
+            "[cocoon] InterruptHandler: requested TerminateExecution\n");
+    return;
+  }
+
+  // default "mutate": demo state writes consumed by cocoon/state.js.
+  // global.counter++
+  v8::Local<v8::Value> counter_value;
+  if (global
+          ->Get(context,
+                v8::String::NewFromUtf8(isolate, "counter").ToLocalChecked())
+          .ToLocal(&counter_value) &&
+      counter_value->IsNumber()) {
+    double current = counter_value->NumberValue(context).FromJust();
+    global
+        ->Set(context,
+              v8::String::NewFromUtf8(isolate, "counter").ToLocalChecked(),
+              v8::Number::New(isolate, current + 1))
+        .Check();
+  }
+
+  // global.settings.debugMode = true
+  v8::Local<v8::Value> settings_value;
+  if (global
+          ->Get(context,
+                v8::String::NewFromUtf8(isolate, "settings").ToLocalChecked())
+          .ToLocal(&settings_value) &&
+      settings_value->IsObject()) {
+    v8::Local<v8::Object> settings = settings_value.As<v8::Object>();
+    settings
+        ->Set(context,
+              v8::String::NewFromUtf8(isolate, "debugMode").ToLocalChecked(),
+              v8::Boolean::New(isolate, true))
+        .Check();
+  }
+
+  fprintf(stderr,
+          "[cocoon] InterruptHandler: bumped global.counter, "
+          "set global.settings.debugMode=true\n");
+}
+
+// POSIX signal handler for SIGUSR2. Runs in signal context, so it does the bare
+// minimum: grab the current isolate and ask V8 to run InterruptHandler at its
+// next safe point. RequestInterrupt is async-safe for this purpose.
+void SignalCustom(int signo, siginfo_t* info, void* ucontext) {
+  fprintf(stderr, "[cocoon] SignalCustom: received signal %d\n", signo);
+  Isolate* isolate = Isolate::GetCurrent();
+  if (isolate == nullptr) {
+    // No isolate on this thread (e.g. signal hit a worker/helper thread).
+    fprintf(stderr, "[cocoon] SignalCustom: no isolate on this thread; "
+                    "ignoring\n");
+    return;
+  }
+  fprintf(stderr,
+          "[cocoon] SignalCustom: requesting V8 interrupt (InContext=%s)\n",
+          isolate->InContext() ? "true" : "false");
+  isolate->RequestInterrupt(InterruptHandler, nullptr);
+}
 #endif  // __POSIX__
 
 #if HAVE_INSPECTOR
@@ -286,6 +386,7 @@ std::optional<StartExecutionCallbackInfo> CallbackInfoFromArray(
 }
 
 MaybeLocal<Value> StartExecution(Environment* env, StartExecutionCallback cb) {
+  fprintf(stderr, "[cocoon] StartExecution: starting main execution\n");
   InternalCallbackScope callback_scope(
       env,
       Object::New(env->isolate()),
@@ -616,6 +717,7 @@ static void PlatformInit(ProcessInitializationFlags::Flags flags) {
   if (!(flags & ProcessInitializationFlags::kNoDefaultSignalHandling)) {
     RegisterSignalHandler(SIGINT, SignalExit, true);
     RegisterSignalHandler(SIGTERM, SignalExit, true);
+    RegisterSignalHandler(SIGUSR2, SignalCustom, false);
   }
 
   if (!(flags & ProcessInitializationFlags::kNoAdjustResourceLimits)) {
@@ -1546,6 +1648,7 @@ static ExitCode StartInternal(int argc, char** argv) {
                                  per_process::v8_platform.Platform(),
                                  result->args(),
                                  result->exec_args());
+  fprintf(stderr, "[cocoon] StartInternal: NodeMainInstance created, running\n");
   return main_instance.Run();
 }
 

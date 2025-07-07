@@ -20,6 +20,9 @@ using v8::TryCatch;
 namespace node {
 
 Maybe<ExitCode> SpinEventLoopInternal(Environment* env) {
+  // cocoon: fires once when the embedder event loop starts. Per-iteration traces
+  // (uv_run / DrainTasks) were removed as they flood for any real program.
+  fprintf(stderr, "[cocoon] SpinEventLoopInternal: entering event loop\n");
   CHECK_NOT_NULL(env);
   MultiIsolatePlatform* platform = GetMultiIsolatePlatform(env);
   CHECK_NOT_NULL(platform);
