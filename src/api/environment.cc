@@ -529,6 +529,8 @@ NODE_EXTERN std::unique_ptr<InspectorParentHandle> GetInspectorParentHandle(
 MaybeLocal<Value> LoadEnvironment(Environment* env,
                                   StartExecutionCallback cb,
                                   EmbedderPreloadCallback preload) {
+  std::printf("[src/api/environment.cc][LoadEnvironment] "
+              "Loading environment...\n");
   env->InitializeLibuv();
   env->InitializeDiagnostics();
   if (preload) {
@@ -542,6 +544,9 @@ MaybeLocal<Value> LoadEnvironment(Environment* env,
 MaybeLocal<Value> LoadEnvironment(Environment* env,
                                   std::string_view main_script_source_utf8,
                                   EmbedderPreloadCallback preload) {
+  std::printf("[src/api/environment.cc][LoadEnvironment] "
+              "main_script_source_utf8: %s\n",
+              main_script_source_utf8.data());
   // It could be empty when it's used by SEA to load an empty script.
   CHECK_IMPLIES(main_script_source_utf8.size() > 0,
                 main_script_source_utf8.data());

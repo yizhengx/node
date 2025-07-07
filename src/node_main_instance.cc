@@ -101,10 +101,12 @@ ExitCode NodeMainInstance::Run() {
 }
 
 void NodeMainInstance::Run(ExitCode* exit_code, Environment* env) {
+  std::printf("[src/node_main_instance.cc][NodeMainInstance::Run] Running Node.js instance...\n");
   if (*exit_code == ExitCode::kNoFailure) {
     if (!sea::MaybeLoadSingleExecutableApplication(env)) {
       LoadEnvironment(env, StartExecutionCallback{});
     }
+
 
     *exit_code =
         SpinEventLoopInternal(env).FromMaybe(ExitCode::kGenericUserError);

@@ -94,6 +94,7 @@ int wmain(int argc, wchar_t* wargv[]) {
 // UNIX
 
 int main(int argc, char* argv[]) {
+  std::printf("[src/node_main.c] argc: %d\n", argc);
   return node::Start(argc, argv);
 }
 #endif

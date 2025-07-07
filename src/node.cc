@@ -185,6 +185,89 @@ void SignalExit(int signo, siginfo_t* info, void* ucontext) {
   ResetStdio();
   raise(signo);
 }
+void InterruptHandler_(v8::Isolate* isolate, void* data) {
+  std::printf("[src/node.cc] InterruptHandler called for signal\n");
+  bool inContext = isolate->InContext();
+  std::printf("[src/node.cc] InContext: %s\n", inContext ? "true" : "false");
+  
+  // Throw exception
+  v8::HandleScope scope(isolate);
+  v8::Local<v8::String> msg = v8::String::NewFromUtf8(isolate, "Interrupted!").ToLocalChecked();
+  isolate->ThrowError(msg);
+  // isolate->TerminateExecution();
+  return;
+}
+
+
+void InterruptHandler(v8::Isolate* isolate, void* data) {
+  std::printf("[src/node.cc][InterruptHandler] InterruptHandler called for signal\n");
+  bool inContext = isolate->InContext();
+  std::printf("[src/node.cc][InterruptHandler] InContext: %s\n", inContext ? "true" : "false");
+
+  v8::HandleScope handle_scope(isolate);
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Context::Scope context_scope(context);
+  v8::Local<v8::Object> global = context->Global();
+
+  // // Try executing a function
+  // v8::Local<v8::Value> logFunc;
+  // if (global->Get(context, v8::String::NewFromUtf8(isolate, "console.log").ToLocalChecked()).ToLocal(&logFunc)) {
+  //   if (logFunc->IsFunction()) {
+  //     v8::Local<v8::Function> log = logFunc.As<v8::Function>();
+  //     v8::Local<v8::Value> args[] = {
+  //       v8::String::NewFromUtf8(isolate, "Interrupt modified state!").ToLocalChecked()
+  //     };
+  //     log->Call(context, global, 1, args).ToLocalChecked();  // Call console.log()
+  //   }
+  // }
+
+  // Modify a global variable (counter)
+  v8::Local<v8::Value> counterValue;
+  if (global->Get(context, v8::String::NewFromUtf8(isolate, "counter").ToLocalChecked()).ToLocal(&counterValue)) {
+    if (counterValue->IsNumber()) {
+      double current = counterValue->NumberValue(context).FromJust();
+      // Increment counter
+      global->Set(
+        context,
+        v8::String::NewFromUtf8(isolate, "counter").ToLocalChecked(),
+        v8::Number::New(isolate, current + 1)
+      ).Check();  // `.Check()` ensures assignment succeeded
+    }
+  }
+
+  // Modify an object property (settings.debugMode)
+  v8::Local<v8::Value> settingsValue;
+  if (global->Get(context, v8::String::NewFromUtf8(isolate, "settings").ToLocalChecked()).ToLocal(&settingsValue)) {
+    if (settingsValue->IsObject()) {
+      v8::Local<v8::Object> settings = settingsValue.As<v8::Object>();
+      settings->Set(
+        context,
+        v8::String::NewFromUtf8(isolate, "debugMode").ToLocalChecked(),
+        v8::Boolean::New(isolate, true)  // Force debug mode on
+      ).Check();
+    }
+  }
+
+  // return;
+}
+void SignalCustom(int signo, siginfo_t* info, void* ucontext) {
+  // This function is used to handle custom signals.
+  Isolate *isolate = Isolate::GetCurrent();
+  if (isolate == nullptr) {
+    // If there is no isolate, we cannot handle the signal.
+    std::printf("[src/node.cc][SignalCustom] No isolate available to handle signal %d\n", signo);
+    return;
+  }
+  std::printf("[src/node.cc][SignalCustom] Custom signal handler for signal %d\n", signo);
+  bool inContext = isolate->InContext();
+  std::printf("[src/node.cc][SignalCustom] InContext: %s\n", inContext ?
+                "true" : "false");
+  isolate->RequestInterrupt(InterruptHandler, nullptr);
+  // v8::HandleScope scope(isolate);
+  // v8::Local<v8::String> msg = v8::String::NewFromUtf8(isolate, "Interrupted!").ToLocalChecked();
+  // isolate->ThrowError(msg);
+  return;
+}
 #endif  // __POSIX__
 
 #if HAVE_INSPECTOR
@@ -286,6 +369,7 @@ std::optional<StartExecutionCallbackInfo> CallbackInfoFromArray(
 }
 
 MaybeLocal<Value> StartExecution(Environment* env, StartExecutionCallback cb) {
+  std::printf("[src/node.cc][StartExecution] Starting execution...\n");
   InternalCallbackScope callback_scope(
       env,
       Object::New(env->isolate()),
@@ -616,6 +700,7 @@ static void PlatformInit(ProcessInitializationFlags::Flags flags) {
   if (!(flags & ProcessInitializationFlags::kNoDefaultSignalHandling)) {
     RegisterSignalHandler(SIGINT, SignalExit, true);
     RegisterSignalHandler(SIGTERM, SignalExit, true);
+    RegisterSignalHandler(SIGUSR2, SignalCustom, false);
   }
 
   if (!(flags & ProcessInitializationFlags::kNoAdjustResourceLimits)) {
@@ -1491,6 +1576,7 @@ static ExitCode StartInternal(int argc, char** argv) {
 
   // Hack around with the argv pointer. Used for process.title = "blah".
   argv = uv_setup_args(argc, argv);
+  std::printf("[src/node.cc][StartInternal] argv[1]: %s\n", argv[1]);
 
   std::shared_ptr<InitializationResultImpl> result =
       InitializeOncePerProcessInternal(
@@ -1546,6 +1632,7 @@ static ExitCode StartInternal(int argc, char** argv) {
                                  per_process::v8_platform.Platform(),
                                  result->args(),
                                  result->exec_args());
+  std::printf("[src/node.cc][StartInternal] main_instance created\n");
   return main_instance.Run();
 }
 

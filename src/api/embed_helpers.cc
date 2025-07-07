@@ -20,6 +20,7 @@ using v8::TryCatch;
 namespace node {
 
 Maybe<ExitCode> SpinEventLoopInternal(Environment* env) {
+  std::printf("[src/api/embed_helpers.cc][SpinEventLoopInternal] Called\n");
   CHECK_NOT_NULL(env);
   MultiIsolatePlatform* platform = GetMultiIsolatePlatform(env);
   CHECK_NOT_NULL(platform);
@@ -36,11 +37,14 @@ Maybe<ExitCode> SpinEventLoopInternal(Environment* env) {
     bool more;
     env->performance_state()->Mark(
         node::performance::NODE_PERFORMANCE_MILESTONE_LOOP_START);
+    std::printf("[src/api/embed_helpers.cc][SpinEventLoopInternal] Running event loop...\n");
     do {
       if (env->is_stopping()) break;
+      std::printf("[src/api/embed_helpers.cc][SpinEventLoopInternal] uv_run...\n");
       uv_run(env->event_loop(), UV_RUN_DEFAULT);
       if (env->is_stopping()) break;
 
+      std::printf("[src/api/embed_helpers.cc][SpinEventLoopInternal] draining tasks...\n");
       platform->DrainTasks(isolate);
 
       more = uv_loop_alive(env->event_loop());

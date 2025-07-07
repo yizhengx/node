@@ -447,8 +447,12 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
         uv__queue_empty(&loop->pending_queue) &&
         uv__queue_empty(&loop->idle_handles);
 
+    printf("[deps/uv/src/unix/core.c][uv_run] can_sleep: %d\n", can_sleep);
+    printf("[deps/uv/src/unix/core.c][uv_run] pending loop\n");
     uv__run_pending(loop);
+    printf("[deps/uv/src/unix/core.c][uv_run] idle loop\n");
     uv__run_idle(loop);
+    printf("[deps/uv/src/unix/core.c][uv_run] prepare loop\n");
     uv__run_prepare(loop);
 
     timeout = 0;
